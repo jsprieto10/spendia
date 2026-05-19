@@ -400,6 +400,12 @@
 
     <!-- OVERVIEW -->
     <section class="panel active" id="panel-overview">
+      <div class="controls" style="margin-bottom:20px">
+        <span class="label-mini">Mes</span>
+        <div class="select-wrap">
+          <select id="overview-month"></select>
+        </div>
+      </div>
       <div class="grid grid-stats">
         <div class="card">
           <div class="card-title">Mes actual</div>
@@ -425,14 +431,20 @@
 
       <div class="grid grid-2">
         <div class="card">
-          <div class="card-title">Gasto mensual · últimos 12 meses</div>
+          <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:16px">
+            <div class="card-title" style="margin-bottom:0">Gasto mensual · últimos 12 meses</div>
+            <label style="display:flex; align-items:center; gap:8px; cursor:pointer; font-size:12px; color:var(--text-1); font-family:'JetBrains Mono',monospace; user-select:none">
+              <input type="checkbox" id="bars-yoy" style="accent-color:var(--good); cursor:pointer">
+              año anterior
+            </label>
+          </div>
           <div class="chart-wrap" id="overview-bars-wrap">
             <svg class="chart" id="overview-bars" viewBox="0 0 800 320" preserveAspectRatio="none"></svg>
             <div class="tooltip" id="bars-tooltip"></div>
           </div>
         </div>
         <div class="card">
-          <div class="card-title">Distribución por categoría · mes actual</div>
+          <div class="card-title" id="dist-title">Distribución por categoría · mes actual</div>
           <div id="overview-cats"></div>
         </div>
       </div>
@@ -549,18 +561,12 @@
   <div class="footer-note">Datos leídos desde Google Sheets · solo lectura · solo tú</div>
 </div>
 
+<script src="config-dev.js" ></script>
+
 <script>
 // ============================================================
 // CONFIG
 // ============================================================
-
-// Start config
-const CLIENT_ID = '__CLIENT_ID__';
-const API_KEY = '__API_KEY__';
-const SHEET_ID = '__SHEET_ID__';
-const SHEET_TAB = '__SHEET_TAB__';
-const SCOPES = '__SCOPES__';
-// End Config
 
 // Paleta para categorías (asignación estable)
 const PALETTE = [
@@ -821,14 +827,16 @@ function renderOverview() {
   const counts = countByMonth();
   if (!monthKeys.length) return;
 
-  const current = monthKeys[monthKeys.length - 1];
-  const prev = monthKeys[monthKeys.length - 2];
+  const sel = $('overview-month');
+  const current = (sel && sel.value) ? sel.value : monthKeys[monthKeys.length - 1];
+  const currentIdx = monthKeys.indexOf(current);
+  const prev = currentIdx > 0 ? monthKeys[currentIdx - 1] : null;
 
   const currentTotal = totals[current] || 0;
   const prevTotal = prev ? (totals[prev] || 0) : 0;
 
-  // Promedio: solo meses completos anteriores al actual
-  const histKeys = monthKeys.slice(0, -1);
+  // Promedio: solo meses completos anteriores al seleccionado
+  const histKeys = monthKeys.slice(0, currentIdx);
   const histAvg = histKeys.length ? histKeys.reduce((a,k) => a + totals[k], 0) / histKeys.length : currentTotal;
 
   $('stat-current').textContent = fmt(currentTotal);
@@ -865,14 +873,19 @@ function renderOverview() {
     el.textContent = `${arrow} ${Math.abs(diff)} vs ${monthLabel(prev)}`;
   }
 
+  // Título distribución dinámico
+  const distTitle = $('dist-title');
+  if (distTitle) distTitle.textContent = `Distribución por categoría · ${monthLabelFull(current)}`;
+
   // Barras últimos 12 meses
-  renderBars(totals);
+  const showYoY = $('bars-yoy') && $('bars-yoy').checked;
+  renderBars(totals, showYoY);
 
   // Distribución del mes
   renderCategoryDistribution($('overview-cats'), catsThisMonth, currentTotal);
 }
 
-function renderBars(totals) {
+function renderBars(totals, showYoY) {
   const svg = $('overview-bars');
   svg.innerHTML = '';
   const W = 800, H = 320;
@@ -882,8 +895,15 @@ function renderBars(totals) {
 
   const keys = monthKeys.slice(-12);
   if (!keys.length) return;
+
+  const yoyKeys = keys.map(k => { const [y,m] = k.split('-'); return `${+y-1}-${m}`; });
   const vals = keys.map(k => totals[k] || 0);
-  const max = Math.max(...vals, 1);
+  const yoyVals = yoyKeys.map(k => totals[k] !== undefined ? totals[k] : null);
+  const hasAnyYoy = showYoY && yoyVals.some(v => v !== null);
+
+  const allVals = hasAnyYoy ? [...vals, ...yoyVals.filter(v => v !== null)] : vals;
+  const max = Math.max(...allVals, 1);
+  const lastKey = monthKeys[monthKeys.length - 1];
 
   // Ticks de Y
   const ticks = 4;
@@ -894,34 +914,59 @@ function renderBars(totals) {
     svg.innerHTML += `<text x="${padL - 8}" y="${y + 3}" text-anchor="end">£${fmtShort(val)}</text>`;
   }
 
-  const barW = plotW / keys.length * 0.65;
   const gap = plotW / keys.length;
 
-  keys.forEach((k, i) => {
-    const v = totals[k] || 0;
-    const h = (v / max) * plotH;
-    const x = padL + gap * i + (gap - barW) / 2;
-    const y = padT + plotH - h;
-    const isCurrent = i === keys.length - 1;
-    const color = isCurrent ? 'var(--accent)' : 'var(--neutral)';
-    svg.innerHTML += `
-      <rect class="bar" data-key="${k}" data-val="${v}"
-        x="${x}" y="${y}" width="${barW}" height="${h}"
-        fill="${color}" opacity="${isCurrent ? 0.95 : 0.55}"
-        style="transition: opacity 0.2s; cursor:pointer">
-      </rect>`;
-    svg.innerHTML += `<text x="${x + barW/2}" y="${H - padB + 16}" text-anchor="middle">${monthLabel(k)}</text>`;
-  });
+  if (hasAnyYoy) {
+    const barW = gap * 0.34;
+    const barPad = gap * 0.04;
+    keys.forEach((k, i) => {
+      const v = vals[i];
+      const yoyV = yoyVals[i];
+      const isCurrent = k === lastKey;
+      const groupX = padL + gap * i + (gap - barW * 2 - barPad) / 2;
+      const color = isCurrent ? 'var(--accent)' : 'var(--neutral)';
 
-  // Tooltip handlers
+      const h = (v / max) * plotH;
+      svg.innerHTML += `
+        <rect class="bar" data-key="${k}" data-val="${v}"
+          x="${groupX}" y="${padT + plotH - h}" width="${barW}" height="${h}"
+          fill="${color}" opacity="${isCurrent ? 0.9 : 0.55}"
+          style="transition:opacity 0.2s; cursor:pointer"></rect>`;
+
+      if (yoyV !== null) {
+        const yoyH = (yoyV / max) * plotH;
+        svg.innerHTML += `
+          <rect class="bar-yoy" data-key="${yoyKeys[i]}" data-val="${yoyV}"
+            x="${groupX + barW + barPad}" y="${padT + plotH - yoyH}" width="${barW}" height="${yoyH}"
+            fill="var(--good)" opacity="0.35"
+            style="transition:opacity 0.2s; cursor:pointer"></rect>`;
+      }
+
+      svg.innerHTML += `<text x="${groupX + barW + barPad / 2}" y="${H - padB + 16}" text-anchor="middle">${monthLabel(k)}</text>`;
+    });
+  } else {
+    const barW = gap * 0.65;
+    keys.forEach((k, i) => {
+      const v = vals[i];
+      const h = (v / max) * plotH;
+      const x = padL + gap * i + (gap - barW) / 2;
+      const isCurrent = k === lastKey;
+      const color = isCurrent ? 'var(--accent)' : 'var(--neutral)';
+      svg.innerHTML += `
+        <rect class="bar" data-key="${k}" data-val="${v}"
+          x="${x}" y="${padT + plotH - h}" width="${barW}" height="${h}"
+          fill="${color}" opacity="${isCurrent ? 0.95 : 0.55}"
+          style="transition:opacity 0.2s; cursor:pointer"></rect>`;
+      svg.innerHTML += `<text x="${x + barW/2}" y="${H - padB + 16}" text-anchor="middle">${monthLabel(k)}</text>`;
+    });
+  }
+
   const tip = $('bars-tooltip');
   svg.querySelectorAll('.bar').forEach(bar => {
-    bar.addEventListener('mouseenter', (e) => {
+    bar.addEventListener('mouseenter', () => {
       const k = bar.getAttribute('data-key');
       const v = parseFloat(bar.getAttribute('data-val'));
-      tip.innerHTML = `
-        <div class="t-label">${monthLabelFull(k)}</div>
-        <div class="t-value">£${fmt(v)}</div>`;
+      tip.innerHTML = `<div class="t-label">${monthLabelFull(k)}</div><div class="t-value">£${fmt(v)}</div>`;
       tip.style.opacity = 1;
       bar.style.opacity = 1;
     });
@@ -932,7 +977,26 @@ function renderBars(totals) {
     });
     bar.addEventListener('mouseleave', () => {
       tip.style.opacity = 0;
-      bar.style.opacity = bar.getAttribute('data-key') === monthKeys[monthKeys.length-1] ? 0.95 : 0.55;
+      bar.style.opacity = bar.getAttribute('data-key') === lastKey ? 0.95 : 0.55;
+    });
+  });
+
+  svg.querySelectorAll('.bar-yoy').forEach(bar => {
+    bar.addEventListener('mouseenter', () => {
+      const k = bar.getAttribute('data-key');
+      const v = parseFloat(bar.getAttribute('data-val'));
+      tip.innerHTML = `<div class="t-label">${monthLabelFull(k)} <span style="color:var(--good);font-size:10px">año ant.</span></div><div class="t-value">£${fmt(v)}</div>`;
+      tip.style.opacity = 1;
+      bar.style.opacity = 0.8;
+    });
+    bar.addEventListener('mousemove', (e) => {
+      const rect = $('overview-bars-wrap').getBoundingClientRect();
+      tip.style.left = (e.clientX - rect.left + 12) + 'px';
+      tip.style.top = (e.clientY - rect.top - 12) + 'px';
+    });
+    bar.addEventListener('mouseleave', () => {
+      tip.style.opacity = 0;
+      bar.style.opacity = 0.35;
     });
   });
 }
@@ -1233,11 +1297,22 @@ function renderTx() {
 // ============================================================
 // RENDER · ALL
 // ============================================================
+function setupOverviewMonthSelector() {
+  const sel = $('overview-month');
+  if (!sel) return;
+  sel.innerHTML = monthKeys.slice().reverse().map(k => `<option value="${k}">${monthLabelFull(k)}</option>`).join('');
+  sel.value = monthKeys[monthKeys.length - 1];
+  sel.onchange = renderOverview;
+  const yoyCheck = $('bars-yoy');
+  if (yoyCheck) yoyCheck.onchange = renderOverview;
+}
+
 function renderAll() {
   if (!rawRows.length) {
     showError('No se encontraron transacciones en el Sheet.');
     return;
   }
+  setupOverviewMonthSelector();
   renderOverview();
   setupMonthSelectors();
   renderMonthly();

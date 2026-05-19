@@ -13,11 +13,12 @@ jobs:
       - uses: actions/checkout@v4
       - name: Inject API Key
         run: |
-          sed -i "s|__CLIENT_ID__|${{ secrets.GOOGLE_CLIENT_ID }}|g" dashboard.html
-          sed -i "s|__API_KEY__|${{ secrets.GOOGLE_API_KEY }}|g" dashboard.html
-          sed -i "s|__SHEET_ID__|${{ secrets.SHEET_ID }}|g" dashboard.html
-          sed -i "s|__SHEET_TAB__|${{ vars.SHEET_TAB }}|g" dashboard.html
-          sed -i "s|__SCOPES__|${{ vars.SCOPES }}|g" dashboard.html
+          sed -i "s|config-dev.js|config.js|g" dashboard.html
+          sed -i "s|__CLIENT_ID__|${{ secrets.GOOGLE_CLIENT_ID }}|g" config.js
+          sed -i "s|__API_KEY__|${{ secrets.GOOGLE_API_KEY }}|g" config.js
+          sed -i "s|__SHEET_ID__|${{ secrets.SHEET_ID }}|g" config.js
+          sed -i "s|__SHEET_TAB__|${{ vars.SHEET_TAB }}|g" config.js
+          sed -i "s|__SCOPES__|${{ vars.SCOPES }}|g" config.js
 
 
       - uses: actions/upload-pages-artifact@v3
